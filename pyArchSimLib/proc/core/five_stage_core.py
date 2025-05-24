@@ -156,8 +156,11 @@ class FiveStageInorderCore():
         # Print the PC
         ppc_str = '{:#010x}'.format(ppc)
 
-        if s.squash:
-          ppc_str = '-'
+        # hawajkm: decided to reverse this decision, since the
+        #          actual micro-architecture does not squash the
+        #          fetch stage.
+        #if s.squash:
+        #  ppc_str = '-'
 
         lt_buf = '{: <10}'.format(ppc_str)
       else:
