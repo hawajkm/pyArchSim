@@ -97,83 +97,96 @@ class OoOCore:
 
     def decode(s):
         if s.fetch_buffer and s.iMemHasResp and s.iMemHasResp():
-            resp = s.iMemRecvResp()
-            inst = sum(resp['data'][i] << (8*i) for i in range(4))
-            pc = s.fetch_buffer['pc']
+            resp   = s.iMemRecvResp()
+            inst   = sum(resp['data'][i] << (8*i) for i in range(4))
+            pc     = s.fetch_buffer['pc']
 
-            # Decode fields
+            # decode fields
             opcode = (inst >> 26) & 0x3F
             funct  = inst & 0x3F
-            rs_idx = (inst >> 21) & 0x1F
-            rt_idx = (inst >> 16) & 0x1F
-            rd_idx = (inst >> 11) & 0x1F
+            rs     = (inst >> 21) & 0x1F
+            rt     = (inst >> 16) & 0x1F
+            rd     = (inst >> 11) & 0x1F
             imm16  = inst & 0xFFFF
             imm26  = inst & 0x3FFFFFF
 
-            # Determine mnemonic and memory flag
-            mnemonic = 'unknown'; isMem = False
-            if opcode == 0x00:
-                if funct == 0x0C:   mnemonic = 'syscall'
-                elif funct == 0x20: mnemonic = 'add'
-                elif funct == 0x21: mnemonic = 'addu'
-                elif funct == 0x22: mnemonic = 'sub'
-                elif funct == 0x24: mnemonic = 'and'
-                elif funct == 0x25: mnemonic = 'or'
-                # ... other R-types
-            elif opcode == 0x02: mnemonic = 'j'
-            elif opcode == 0x03: mnemonic = 'jal'
-            elif opcode == 0x04: mnemonic = 'beq'
-            elif opcode == 0x05: mnemonic = 'bne'
-            elif opcode == 0x08: mnemonic = 'addi'
-            elif opcode == 0x09: mnemonic = 'addiu'
-            elif opcode == 0x0C: mnemonic = 'andi'
-            elif opcode == 0x0D: mnemonic = 'ori'
-            elif opcode == 0x23: mnemonic = 'lw';   isMem = True
-            elif opcode == 0x21: mnemonic = 'lh';   isMem = True
-            elif opcode == 0x20: mnemonic = 'lb';   isMem = True
-            elif opcode == 0x2B: mnemonic = 'sw';   isMem = True
-            elif opcode == 0x29: mnemonic = 'sh';   isMem = True
-            elif opcode == 0x28: mnemonic = 'sb';   isMem = True
+            # default metadata
+            mnemonic = 'unknown'
+            isMem    = False
+            uses_rs  = False
+            uses_rt  = False
 
+            # figure out what it is
+            if opcode == 0x00:
+                # special / R-type
+                if   funct == 0x08:
+                    mnemonic = 'jr';   uses_rs = True
+                elif funct == 0x0C:
+                    mnemonic = 'syscall'; uses_rs = True
+                else:
+                    uses_rs = uses_rt = True
+                    if   funct == 0x20: mnemonic = 'add'
+                    elif funct == 0x21: mnemonic = 'addu'
+                    elif funct == 0x22: mnemonic = 'sub'
+            elif opcode == 0x02:
+                mnemonic = 'j'
+            elif opcode == 0x04:
+                mnemonic = 'beq';  uses_rs = uses_rt = True
+            elif opcode == 0x08:
+                mnemonic = 'addi'; uses_rs = True
+            elif opcode == 0x09:
+                mnemonic = 'addiu';uses_rs = True
+            elif opcode == 0x23:
+                mnemonic = 'lw';   isMem = True;  uses_rs = True
+            elif opcode == 0x2B:
+                mnemonic = 'sw';   isMem = True;  uses_rs = uses_rt = True
+
+            # build micro-op
             mop = {
                 'mnemonic': mnemonic,
-                'isMem': isMem,
-                'pc': pc,
-                'inst': inst,
-                'rs_data': None,
-                'rt_data': None,
-                'rd': None,
-                'imm16': imm16,
-                'imm26': imm26
+                'isMem':    isMem,
+                'pc':       pc,
+                'inst':     inst,
+                'rs_data':  0,
+                'rt_data':  0,
+                'rd':       None,
+                'imm16':    imm16,
+                'imm26':    imm26
             }
 
-            # ROB entry
-            rid = s.rob_tail
-            s.rob[rid] = {'busy':True,'ready':False,'mop':mop}
-            s.rob_tail = (s.rob_tail + 1) % s.rob_size
-
-            # Rename destination
-            if mnemonic not in ['sw','sh','sb','syscall','j','jal','beq','bne']:
-                dest = rd_idx if opcode == 0x00 else rt_idx
-                mop['rd'] = dest
-                s.rat[f'${dest}'] = rid
-
-            # Source operands
-            for src,fld in [(rs_idx,'rs_data'),(rt_idx,'rt_data')]:
-                tag = s.rat[f'${src}']
-                if tag is None or (s.rob[tag] and s.rob[tag]['ready']):
-                    mop[fld] = s.rf[src]
+            # read or rename rs
+            if uses_rs:
+                tag = s.rat[f'${rs}']
+                if tag is None or s.rob[tag] is None or s.rob[tag]['ready']:
+                    mop['rs_data'] = s.rf[rs]
                 else:
-                    mop[fld] = ('TAG', tag)
+                    mop['rs_data'] = ('TAG', tag)
 
-            # Dispatch to RS
+            # read or rename rt
+            if uses_rt:
+                tag = s.rat[f'${rt}']
+                if tag is None or s.rob[tag] is None or s.rob[tag]['ready']:
+                    mop['rt_data'] = s.rf[rt]
+                else:
+                    mop['rt_data'] = ('TAG', tag)
+
+            # rename destination
+            if mnemonic not in ('sw','sb','sh','syscall','j','jr','beq'):
+                dest = (rd if opcode==0x00 else rt)
+                mop['rd'] = dest
+                s.rat[f'${dest}'] = s.rob_tail
+
+            # enqueue into RS & ROB
             unit = 'LS' if isMem else 'ALU'
             for i,slot in enumerate(s.rs[unit]):
                 if slot is None:
-                    s.rs[unit][i] = {'rob_id':rid,'mop':mop}
+                    s.rs[unit][i] = {'rob_id': s.rob_tail, 'mop': mop}
                     break
 
+            s.rob[s.rob_tail] = {'busy': True, 'ready': False, 'mop': mop}
+            s.rob_tail = (s.rob_tail + 1) % s.rob_size
             s.fetch_buffer = None
+
             return f"{mnemonic:<8}".ljust(10)
         return ' D<<<'.ljust(10)
 
@@ -182,79 +195,104 @@ class OoOCore:
             for i,slot in enumerate(slots):
                 if slot:
                     mop = slot['mop']; rid = slot['rob_id']
-                    ready = all(not (isinstance(mop[f],tuple) and mop[f][0]=='TAG') \
-                                for f in ['rs_data','rt_data'])
+                    ready = all(not (isinstance(mop[f],tuple) and mop[f][0]=='TAG') for f in ['rs_data','rt_data'])
                     if ready:
-                        slots[i] = None
+                        s.rs[unit][i] = None
                         s.execute_op(rid)
         return ' I<<<'.ljust(10)
 
     def execute_op(s, rob_id):
-        entry = s.rob[rob_id]; mop = entry['mop']
-        m = mop['mnemonic']
-        rs = mop['rs_data']; rt = mop['rt_data']; imm = mop['imm16']
+        entry = s.rob[rob_id]
+        mop   = entry['mop']
+        m     = mop['mnemonic']
 
-        # Branch/jump
-        if m == 'beq' and rs == rt:
-            s.squash = True
-            s.squash_pc = mop['pc'] + 4 + (s.sign_extend(imm) << 2)
-        elif m == 'bne' and rs != rt:
-            s.squash = True
-            s.squash_pc = mop['pc'] + 4 + (s.sign_extend(imm) << 2)
-        elif m == 'j':
-            s.squash = True
-            s.squash_pc = (mop['pc'] & 0xF0000000) | (mop['imm26'] << 2)
-        elif m == 'jal':
-            s.squash = True
-            s.squash_pc = (mop['pc'] & 0xF0000000) | (mop['imm26'] << 2)
-            entry['value'] = mop['pc'] + 4
+        # 1) control flow
+        if m in ('j','jr'):
+            if m == 'j':
+                target = (mop['pc'] & 0xF0000000) | (mop['imm26'] << 2)
+            else:  # jr
+                target = mop['rs_data']
+            s.squash    = True
+            s.squash_pc = target
             entry['ready'] = True
-            s.inst_c = True
-            return
 
-        # ALU
-        if m in ['add','addu','addi','addiu','sub','subu','and','or','xor','nor']:
-            val = (rs + (rt if m not in ['addi','addiu'] else imm)) & 0xFFFFFFFF
-            entry.update({'value':val,'ready':True}); s.inst_c=True
-        # Load
-        elif m in ['lw','lh','lhu','lb','lbu']:
-            addr = rs + s.sign_extend(imm)
-            data = s.MemReadFunct(addr,4)
-            val = sum(data[i]<<(8*i) for i in range(len(data)))
-            entry.update({'value':val,'ready':True}); s.inst_c=True
-        # Store
-        elif m in ['sw','sh','sb']:
-            entry.update({'value':None,'ready':True}); s.inst_c=True
+        # 2) branch
+        elif m == 'beq':
+            if mop['rs_data'] == mop['rt_data']:
+                offset = s.sign_extend(mop['imm16']) << 2
+                s.squash_pc = mop['pc'] + 4 + offset
+                s.squash    = True
+            entry['ready'] = True
 
-        # Broadcast result
-        for u in s.rs:
-            for slot in s.rs[u] or []:
-                mop2 = slot['mop']
-                for fld in ['rs_data','rt_data']:
-                    v = mop2[fld]
-                    if isinstance(v,tuple) and v[1]==rob_id:
-                        mop2[fld] = entry['value']
+        # 3) memory
+        elif m in ('lw','sw'):
+            addr = mop['rs_data'] + s.sign_extend(mop['imm16'])
+            if m == 'lw':
+                data = s.MemReadFunct(addr, 4)
+                entry['value'] = sum(data[i] << (8*i) for i in range(4))
+            else:
+                data = [(mop['rt_data'] >> (8*i)) & 0xFF for i in range(4)]
+                s.MemWriteFunct(addr, data, 4)
+            entry['ready'] = True
+
+        # 4) ALU
+        else:
+            if   m == 'add':   val = mop['rs_data'] + mop['rt_data']
+            elif m == 'addu':  val = (mop['rs_data'] + mop['rt_data']) & 0xFFFFFFFF
+            elif m == 'sub':   val = mop['rs_data'] - mop['rt_data']
+            elif m == 'addi':  val = mop['rs_data'] + s.sign_extend(mop['imm16'])
+            elif m == 'addiu': val = (mop['rs_data'] + s.sign_extend(mop['imm16'])) & 0xFFFFFFFF
+            else:              val = 0
+            entry['value'] = val & 0xFFFFFFFF
+            entry['ready'] = True
+
+        # 5) broadcast wake-ups
+        for unit in ('ALU','LS'):
+            for slot in s.rs[unit]:
+                if slot:
+                    for fld in ('rs_data','rt_data'):
+                        tag = slot['mop'][fld]
+                        if isinstance(tag, tuple) and tag[1] == rob_id:
+                            slot['mop'][fld] = entry['value']
+
 
     def commit(s):
         entry = s.rob[s.rob_head]
-        if entry and entry['ready']:
-            mop = entry['mop']; m = mop['mnemonic']
-            # Syscall exit
-            if m=='syscall' and s.rf[2]==10:
+        if entry is None:
+            return ' ' * 10
+
+        mop      = entry['mop']
+        mnemonic = mop['mnemonic']
+
+        # finish outstanding loads/stores
+        if mop['isMem'] and not entry['ready']:
+            if mnemonic in ('lw','lh','lhu','lb','lbu') and s.dMemHasResp and s.dMemHasResp():
+                resp = s.dMemRecvResp()
+                entry['value'] = sum(resp['data'][i] << (8*i) for i in range(4))
+                entry['ready'] = True
+            elif mnemonic in ('sw','sh','sb') and s.dMemHasResp and s.dMemHasResp():
+                s.dMemRecvResp()
+                entry['ready'] = True
+
+        # if ready, retire it!
+        if entry.get('ready', False):
+            s.inst_c = True                    # <— mark it completed
+            if mop.get('rd') is not None:
+                s.rf[mop['rd']] = entry['value']
+                if s.rat[f'${mop["rd"]}'] == s.rob_head:
+                    s.rat[f'${mop["rd"]}'] = None
+
+            if mnemonic == 'syscall' and s.rf[2] == 10:
                 s.exit_status = s.rf[4]
                 s.exited = True
-            # Writeback
-            if mop.get('rd') is not None:
-                dst = mop['rd']; s.rf[dst] = entry['value']
-                if s.rat[f'${dst}']==s.rob_head: s.rat[f'${dst}']=None
-            # Store
-            elif m in ['sw','sh','sb']:
-                addr = mop['rs_data'] + s.sign_extend(mop['imm16'])
-                data = [(mop['rt_data']>>(8*i))&0xFF for i in range(4)]
-                s.MemWriteFunct(addr,data,4)
+
             s.rob[s.rob_head] = None
             s.rob_head = (s.rob_head + 1) % s.rob_size
-        return ' W<<<'.ljust(10)
+            return ' W<<<'.ljust(10)
+
+        return ' ' * 10
+
+
 
     def tick(s):
         s.inst_c = False
@@ -262,7 +300,11 @@ class OoOCore:
             # Flush pipeline state
             s.fetch_buffer = None
             s.pc = s.squash_pc
+            # completely empty the ROB and reset head/tail so head == tail
             s.rob = [None] * s.rob_size
+            s.rob_head = 0
+            s.rob_tail = 0
+
             s.rat = {f"${i}": None for i in range(32)}
             s.rs = {'ALU': [None]*s.rs_size, 'LS': [None]*s.rs_size}
             s.squash = False
