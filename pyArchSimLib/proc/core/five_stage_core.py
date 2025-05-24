@@ -1051,8 +1051,9 @@ class FiveStageInorderCore():
         if dinst['wb_en']:
           # Perform writeback
           for reg_idx in dinst['dep']['W']:
+            assert(reg_idx != 0)
             s.rf_s[reg_idx] = dinst['wb_data']
-            s.ready_list_s[reg_idx] = s.ready_list[reg_idx] - 1
+            s.ready_list_s[reg_idx] -= 1
         # Linetracing
         lt_buf = dinst['mnemonic']
 
@@ -1114,7 +1115,7 @@ class FiveStageInorderCore():
     # Eliminate unintentional forwarding from W to D
     # hawajkm: we use shadowed copies
     for i in range(len(s.ready_list_s)):
-      s.ready_list_s[i] = None
+      s.ready_list_s[i] = 0
     for i in range(len(s.rf_s)):
       s.rf_s[i] = None
     s.block_D_s = None
@@ -1137,8 +1138,7 @@ class FiveStageInorderCore():
 
     # Eliminate unintentional forwarding from W to D
     for i in range(len(s.ready_list_s)):
-      if s.ready_list_s[i] is not None:
-        s.ready_list[i] = s.ready_list_s[i]
+      s.ready_list[i] += s.ready_list_s[i]
     for i in range(len(s.rf_s)):
       if s.rf_s[i] is not None:
         s.rf[i] = s.rf_s[i]
