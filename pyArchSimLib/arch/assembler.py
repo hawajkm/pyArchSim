@@ -138,7 +138,7 @@ class assembler():
           fields['rs'] = s.arch['regs'][op]
         elif field == 't':
           fields['rt'] = s.arch['regs'][op]
-        elif field == 's':
+        elif field == 'S':
           fields['shamt'] = eval(op) & 0x1f
         elif field == 'i':
           lbl_re = re.compile(r"(^LSH|^MSH)\((.*)\)$")

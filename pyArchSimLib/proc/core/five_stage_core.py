@@ -385,7 +385,7 @@ class FiveStageInorderCore():
               write_rd = True
               rd       = 31 
 
-            operands    = inst_syntax.split(',')
+            operands = inst_syntax.split(',')
 
             for op in operands:
               if   op == 'd' and rd != 0: write_rd = True
@@ -424,7 +424,7 @@ class FiveStageInorderCore():
             elif (mInst is not None) and (rt in mInst['dep']['W']):
               if not mInst['isMem']:
                 rt_src = 1
-            elif (wInst is not None) and rt in wInst['dep']['W']:
+            elif (wInst is not None) and (rt in wInst['dep']['W']):
               rt_src = 2
           else:
             rt_src = 0
@@ -695,29 +695,41 @@ class FiveStageInorderCore():
         elif mnemonic == 'sll'  :
           op1 = rs_data
           op2 = shamt
-          opD = op1 << op2
+          opD = op1 << (op2 & 0x1f)
           wb_data = (opD) & 0xffffffff
           wb_en = True
         elif mnemonic == 'srl'  :
           op1 = rs_data
           op2 = shamt
-          opD = op1 >> op2
+          opD = op1 >> (op2 & 0x1f)
           wb_data = (opD) & 0xffffffff
           wb_en = True
-        elif mnemonic == 'sra'  : pass
+        elif mnemonic == 'sra'  :
+          op1 = rs_data
+          op2 = shamt
+          opD = op1 >> (op2 & 0x1f)
+          opD = s.sext(opD, 32 - op2)
+          wb_data = (opD) & 0xffffffff
+          wb_en = True
         elif mnemonic == 'sllv' :
           op1 = rs_data
           op2 = rt_data
-          opD = op1 << op2
+          opD = op1 << (op2 & 0x1f)
           wb_data = (opD) & 0xffffffff
           wb_en = True
         elif mnemonic == 'srlv' :
           op1 = rs_data
           op2 = rt_data
-          opD = op1 >> op2
+          opD = op1 >> (op2 & 0x1f)
           wb_data = (opD) & 0xffffffff
           wb_en = True
-        elif mnemonic == 'srav' : pass
+        elif mnemonic == 'srav' :
+          op1 = rs_data
+          op2 = rt_data
+          opD = op1 >> (op2 & 0x1f)
+          opD = s.sext(opD, 32 - op2)
+          wb_data = (opD) & 0xffffffff
+          wb_en = True
 
         #================#
         #  MUL/DIV/MOD   #
