@@ -286,6 +286,7 @@ class OoOCore:
                 s.exit_status = s.rf[4]
                 s.exited = True
 
+        
             s.rob[s.rob_head] = None
             s.rob_head = (s.rob_head + 1) % s.rob_size
             return ' W<<<'.ljust(10)
