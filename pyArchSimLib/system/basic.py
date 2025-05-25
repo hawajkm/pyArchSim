@@ -12,9 +12,9 @@ from pyArchSimLib.mem       import SimpleMultiportedMemory
 
 class BasicSystem():
   # Constructor
-  def __init__(s, doLinetrace=False):
+  def __init__(s, doLinetrace=False, proc=None):
     # hawajkm: basic system includes a memory and a processor (for now).
-    s.proc = FiveStageInorderProcessor()
+    s.proc = proc or FiveStageInorderProcessor()
     s.mem  = SimpleMultiportedMemory(2)
 
     # Connect the parts

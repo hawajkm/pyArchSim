@@ -16,6 +16,8 @@ import argparse
 import os
 import sys
 
+from pyArchSimLib.proc import FiveStageInorderProcessor, OutOfOrderProcessor
+
 # Constants
 ROOT_INDICATOR = '.__PYTHON_ROOT__'
 
@@ -51,6 +53,7 @@ parser.add_argument('asm_file')
 parser.add_argument('-m', '--max-num-cycles', type=int, default=1000000)
 parser.add_argument('-l', '--linetrace', action='store_true')
 parser.add_argument('-f', '--linetrace-file', type=str)
+parser.add_argument('--ooo', action='store_true', help='Use the Out-of-Order core')
 
 # Parse the arguments
 args = parser.parse_args()
@@ -64,7 +67,24 @@ if ltFilename: ltFile = open(ltFilename, 'w')
 
 # System and assembler
 assemblerObj = assembler(mips32)
-system       = BasicSystem(ltEnable)
+# system       = BasicSystem(ltEnable)
+
+# Pick in-order vs. OoO core
+if args.ooo:
+  proc = OutOfOrderProcessor()
+else:
+  proc = FiveStageInorderProcessor()
+
+# Build the system around that proc
+system = BasicSystem(ltEnable)
+system.proc = proc
+# Re-wire the memory interfaces
+system.proc.setMemCanReq   (system.mem.canReq)
+system.proc.setMemSendReq  (system.mem.sendReq)
+system.proc.setMemHasResp  (system.mem.hasResp)
+system.proc.setMemRecvResp (system.mem.recvResp)
+system.proc.setMemReadFunct (system.mem.read)
+system.proc.setMemWriteFunct(system.mem.write)
 
 # Open the assembly file
 asmFilename = args.asm_file
